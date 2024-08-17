@@ -171,6 +171,10 @@ pub struct InvalidIdleTimeout;
 ///   a TLS [`Identity`] for the server.
 /// - [`with_custom_tls`](ServerConfigBuilder::with_custom_tls): sets the TLS
 ///   server configuration manually.
+/// - [`with_custom_transport`](ServerConfigBuilder::with_custom_transport): sets the QUIC
+///   transport configuration manually (using default TLS).
+/// - [`with_custom_tls_and_transport`](ServerConfigBuilder::with_custom_tls_and_transport): sets both
+///   a custom TLS and QUIC configuration.
 ///
 /// #### Examples:
 /// ```
@@ -346,7 +350,10 @@ impl ServerConfigBuilder<states::WantsIdentity> {
     ) -> ServerConfigBuilder<states::WantsTransportConfigServer> {
         use crate::tls::server::build_default_tls_config;
 
-        self.with_custom_tls(build_default_tls_config(identity))
+        let tls_config = build_default_tls_config(identity);
+        let quic_transport_config = TransportConfig::default();
+
+        self.with(tls_config, quic_transport_config)
     }
 
     /// Allows for manual configuration of a custom TLS setup using a provided
@@ -383,8 +390,90 @@ impl ServerConfigBuilder<states::WantsIdentity> {
         self,
         tls_config: TlsServerConfig,
     ) -> ServerConfigBuilder<states::WantsTransportConfigServer> {
-        let transport_config = TransportConfig::default();
+        let quic_transport_config = TransportConfig::default();
 
+        self.with(tls_config, quic_transport_config)
+    }
+
+    /// Configures the server with a custom QUIC transport configuration and a default TLS setup
+    /// using the provided [`Identity`].
+    ///
+    /// This method is useful for scenarios where you need to customize the transport settings
+    /// while relying on a default TLS configuration built from an [`Identity`]. It gives you
+    /// control over the transport layer while maintaining safe and standard TLS settings.
+    ///
+    /// **See**: [`with_identity`](Self::with_identity)
+    /// for a simpler configuration option that does not require custom transport settings.
+    ///
+    /// # Parameters
+    ///
+    /// - `identity`: A reference to an [`Identity`] that contains the server's certificate and
+    ///   private key. This will be used to generate the default TLS configuration.
+    /// - `quic_transport_config`: A custom [`QuicTransportConfig`] instance that allows you to specify
+    ///   various QUIC transport-layer settings according to your requirements.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use wtransport::config::QuicTransportConfig;
+    /// use wtransport::Identity;
+    /// use wtransport::ServerConfig;
+    ///
+    /// // Generate a server identity (self signed certificate and private key)
+    /// let identity = Identity::self_signed(["localhost", "127.0.0.1", "::1"]).unwrap();
+    ///
+    /// // Create a custom QuicTransportConfig with specific settings
+    /// let mut custom_transport_config = QuicTransportConfig::default();
+    /// custom_transport_config.datagram_send_buffer_size(1024);
+    ///
+    /// // Create a ServerConfigBuilder with the custom transport configuration and default TLS settings
+    /// let server_config = ServerConfig::builder()
+    ///     .with_bind_default(4433)
+    ///     .with_custom_transport(&identity, custom_transport_config)
+    ///     .build();
+    /// ```
+    #[cfg(feature = "quinn")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "quinn")))]
+    pub fn with_custom_transport(
+        self,
+        identity: &Identity,
+        quic_transport_config: QuicTransportConfig,
+    ) -> ServerConfigBuilder<states::WantsTransportConfigServer> {
+        use crate::tls::server::build_default_tls_config;
+
+        let tls_config = build_default_tls_config(identity);
+
+        self.with(tls_config, quic_transport_config)
+    }
+
+    /// Configures the server with both a custom TLS configuration and a custom QUIC transport
+    /// configuration.
+    ///
+    /// This method is designed for advanced users who require full control over both the TLS
+    /// and transport settings. It allows you to pass a preconfigured [`TlsServerConfig`] and
+    /// a custom [`QuicTransportConfig`] to fine-tune both layers of the server configuration.
+    ///
+    /// # Parameters
+    ///
+    /// - `tls_config`: A custom [`TlsServerConfig`] instance that allows you to specify
+    ///   detailed TLS settings, such as ciphersuites, certificate verification, and more.
+    /// - `quic_transport_config`: A custom [`QuicTransportConfig`] instance that allows you to specify
+    ///   various QUIC transport-layer settings according to your requirements.
+    #[cfg(feature = "quinn")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "quinn")))]
+    pub fn with_custom_tls_and_transport(
+        self,
+        tls_config: TlsServerConfig,
+        quic_transport_config: QuicTransportConfig,
+    ) -> ServerConfigBuilder<states::WantsTransportConfigServer> {
+        self.with(tls_config, quic_transport_config)
+    }
+
+    fn with(
+        self,
+        tls_config: TlsServerConfig,
+        transport_config: TransportConfig,
+    ) -> ServerConfigBuilder<states::WantsTransportConfigServer> {
         ServerConfigBuilder(states::WantsTransportConfigServer {
             bind_address: self.0.bind_address,
             dual_stack_config: self.0.dual_stack_config,
@@ -611,8 +700,6 @@ impl ServerConfigBuilder<states::WantsTransportConfigServer> {
 /// - [`with_native_certs`](ClientConfigBuilder::with_native_certs): configures to use
 ///   root certificates found in the platform's native certificate store. This is the *default*
 ///   configuration as it uses root store installed on the current machine.
-/// - [`with_custom_tls`](ClientConfigBuilder::with_custom_tls): sets the TLS client
-///   configuration manually.
 /// - [`with_server_certificate_hashes`][cert_hashes]: configures the client to accept
 ///   *some* certificates mapped to hashes. This can be used to connect to self signed
 ///   certificates securely, where the hash of the certificate is shared in advance
@@ -621,6 +708,12 @@ impl ServerConfigBuilder<states::WantsTransportConfigServer> {
 ///   configure to skip server certificate validation. This might be handy for testing purpose
 ///   to accept *self-signed* certificate, but you should almost always prefer
 ///   [`with_server_certificate_hashes`][cert_hashes] for that use case.
+/// - [`with_custom_tls`](ClientConfigBuilder::with_custom_tls): sets the TLS client
+///   configuration manually.
+/// - [`with_custom_transport`](ClientConfigBuilder::with_custom_transport): sets the QUIC
+///   transport configuration manually (using default TLS).
+/// - [`with_custom_tls_and_transport`](ClientConfigBuilder::with_custom_tls_and_transport): sets both
+///   a custom TLS and QUIC configuration.
 ///
 /// Only one of these options can be selected during the client configuration process.
 ///
@@ -778,34 +871,10 @@ impl ClientConfigBuilder<states::WantsRootStore> {
     pub fn with_native_certs(self) -> ClientConfigBuilder<states::WantsTransportConfigClient> {
         use crate::tls::client::build_default_tls_config;
 
-        self.with_custom_tls(build_default_tls_config(
-            Arc::new(build_native_cert_store()),
-            None,
-        ))
-    }
-
-    /// Allows for manual configuration of a custom TLS setup using a provided
-    /// [`rustls::ClientConfig`].
-    ///
-    /// This method is provided for advanced users who need fine-grained control over the
-    /// TLS configuration. It allows you to pass a preconfigured [`rustls::ClientConfig`]
-    /// instance to customize the TLS settings according to your specific requirements.
-    ///
-    /// For most use cases, it is recommended to use the [`with_native_certs`](Self::with_native_certs)
-    /// method to configure TLS with safe defaults.
-    pub fn with_custom_tls(
-        self,
-        tls_config: TlsClientConfig,
-    ) -> ClientConfigBuilder<states::WantsTransportConfigClient> {
+        let tls_config = build_default_tls_config(Arc::new(build_native_cert_store()), None);
         let transport_config = TransportConfig::default();
 
-        ClientConfigBuilder(states::WantsTransportConfigClient {
-            bind_address: self.0.bind_address,
-            dual_stack_config: self.0.dual_stack_config,
-            tls_config,
-            transport_config,
-            dns_resolver: Box::<TokioDnsResolver>::default(),
-        })
+        self.with(tls_config, transport_config)
     }
 
     /// Configures the client to skip server certificate validation, potentially
@@ -845,13 +914,7 @@ impl ClientConfigBuilder<states::WantsRootStore> {
 
         let transport_config = TransportConfig::default();
 
-        ClientConfigBuilder(states::WantsTransportConfigClient {
-            bind_address: self.0.bind_address,
-            dual_stack_config: self.0.dual_stack_config,
-            tls_config,
-            transport_config,
-            dns_resolver: Box::<TokioDnsResolver>::default(),
-        })
+        self.with(tls_config, transport_config)
     }
 
     /// Configures the client to skip *some* server certificates validation.
@@ -889,6 +952,92 @@ impl ClientConfigBuilder<states::WantsRootStore> {
 
         let transport_config = TransportConfig::default();
 
+        self.with(tls_config, transport_config)
+    }
+
+    /// Allows for manual configuration of a custom TLS setup using a provided
+    /// [`rustls::ClientConfig`].
+    ///
+    /// This method is provided for advanced users who need fine-grained control over the
+    /// TLS configuration. It allows you to pass a preconfigured [`rustls::ClientConfig`]
+    /// instance to customize the TLS settings according to your specific requirements.
+    ///
+    /// For most use cases, it is recommended to use the [`with_native_certs`](Self::with_native_certs)
+    /// method to configure TLS with safe defaults.
+    pub fn with_custom_tls(
+        self,
+        tls_config: TlsClientConfig,
+    ) -> ClientConfigBuilder<states::WantsTransportConfigClient> {
+        let transport_config = TransportConfig::default();
+
+        self.with(tls_config, transport_config)
+    }
+
+    /// Similar to [`with_native_certs`](Self::with_native_certs), but it allows specifying a custom
+    /// QUIC transport configuration.
+    ///
+    /// # Parameters
+    ///
+    /// - `quic_transport_config`: A custom [`QuicTransportConfig`] instance that allows you to specify
+    ///   various QUIC transport-layer settings according to your requirements.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use wtransport::config::QuicTransportConfig;
+    /// use wtransport::ClientConfig;
+    ///
+    /// // Create a custom QuicTransportConfig with specific settings
+    /// let mut custom_transport_config = QuicTransportConfig::default();
+    /// custom_transport_config.datagram_send_buffer_size(1024);
+    ///
+    /// // Create a ClientConfigBuilder with the custom transport configuration and default TLS settings
+    /// let client_config = ClientConfig::builder()
+    ///     .with_bind_default()
+    ///     .with_custom_transport(custom_transport_config)
+    ///     .build();
+    /// ```
+    #[cfg(feature = "quinn")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "quinn")))]
+    pub fn with_custom_transport(
+        self,
+        quic_transport_config: QuicTransportConfig,
+    ) -> ClientConfigBuilder<states::WantsTransportConfigClient> {
+        use crate::tls::client::build_default_tls_config;
+
+        let tls_config = build_default_tls_config(Arc::new(build_native_cert_store()), None);
+
+        self.with(tls_config, quic_transport_config)
+    }
+
+    /// Configures the client with both a custom TLS configuration and a custom QUIC transport
+    /// configuration.
+    ///
+    /// This method is designed for advanced users who require full control over both the TLS
+    /// and transport settings. It allows you to pass a preconfigured [`TlsClientConfig`] and
+    /// a custom [`QuicTransportConfig`] to fine-tune both layers of the server configuration.
+    ///
+    /// # Parameters
+    ///
+    /// - `tls_config`: A custom [`TlsClientConfig`] instance that allows you to specify
+    ///   detailed TLS settings, such as ciphersuites, certificate verification, and more.
+    /// - `quic_transport_config`: A custom [`QuicTransportConfig`] instance that allows you to specify
+    ///   various QUIC transport-layer settings according to your requirements.
+    #[cfg(feature = "quinn")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "quinn")))]
+    pub fn with_custom_tls_and_transport(
+        self,
+        tls_config: TlsClientConfig,
+        quic_transport_config: QuicTransportConfig,
+    ) -> ClientConfigBuilder<states::WantsTransportConfigClient> {
+        self.with(tls_config, quic_transport_config)
+    }
+
+    fn with(
+        self,
+        tls_config: TlsClientConfig,
+        transport_config: TransportConfig,
+    ) -> ClientConfigBuilder<states::WantsTransportConfigClient> {
         ClientConfigBuilder(states::WantsTransportConfigClient {
             bind_address: self.0.bind_address,
             dual_stack_config: self.0.dual_stack_config,
